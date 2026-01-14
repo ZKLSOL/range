@@ -34,19 +34,17 @@ pub fn verify_range(ctx: Context<VerifyRange>, args: VerifyRangeArgs) -> Result<
     let clock = Clock::get()?;
     let current_timestamp = clock.unix_timestamp as u64;
     let settings = &ctx.accounts.settings;
+    let signer = &ctx.accounts.signer;
+    let range_signer = settings.range_signer.key();
     let ExtractedMessage { timestamp, pubkey } = extract_message(&message)?;
-    require_keys_eq!(settings.range_signer.key(), pubkey, ErrorCode::WrongSigner);
+    require_keys_eq!(signer.key(), pubkey, ErrorCode::WrongSigner);
     let time_diff = current_timestamp.abs_diff(timestamp);
     require!(
         time_diff <= settings.window_size,
         ErrorCode::TimestampOutOfWindow
     );
-    sig_verify(
-        &settings.range_signer.key().to_bytes(),
-        &signature,
-        &message,
-    )
-    .map_err(|_| ErrorCode::CouldntVerifySignature)?;
+    sig_verify(&range_signer.to_bytes(), &signature, &message)
+        .map_err(|_| ErrorCode::CouldntVerifySignature)?;
     Ok(())
 }
 
