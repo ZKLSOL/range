@@ -16,8 +16,11 @@ declare_id!("qU4JaorHz5P8XkB256mKastX4eS3dAkiYVwEo9P1cJ7");
 pub mod range {
     use super::*;
 
-    pub fn initialize_settings(ctx: Context<InitializeSettings>) -> Result<()> {
-        initialize_settings::initialize_settings(ctx)
+    pub fn initialize_settings(
+        ctx: Context<InitializeSettings>,
+        args: InitializeSettingsArgs,
+    ) -> Result<()> {
+        initialize_settings::initialize_settings(ctx, args)
     }
 
     pub fn verify_range(ctx: Context<VerifyRange>, args: VerifyRangeArgs) -> Result<()> {
