@@ -14,8 +14,6 @@ pub enum ErrorCode {
     WrongSigner,
     #[msg("Couldnt Verify Signature")]
     CouldntVerifySignature,
-    #[msg("Timestamp Too Big")]
-    TimestampTooBig,
-    #[msg("Timestamp Too Small")]
-    TimestampTooSmall,
+    #[msg("Timestamp Out Of Window")]
+    TimestampOutOfWindow,
 }

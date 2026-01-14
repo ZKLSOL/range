@@ -36,13 +36,10 @@ pub fn verify_range(ctx: Context<VerifyRange>, args: VerifyRangeArgs) -> Result<
     let settings = &ctx.accounts.settings;
     let ExtractedMessage { timestamp, pubkey } = extract_message(&message)?;
     require_keys_eq!(settings.range_signer.key(), pubkey, ErrorCode::WrongSigner);
+    let time_diff = current_timestamp.abs_diff(timestamp);
     require!(
-        current_timestamp + settings.window_size > timestamp,
-        ErrorCode::TimestampTooBig
-    );
-    require!(
-        current_timestamp - settings.window_size < timestamp,
-        ErrorCode::TimestampTooSmall
+        time_diff <= settings.window_size,
+        ErrorCode::TimestampOutOfWindow
     );
     sig_verify(
         &settings.range_signer.key().to_bytes(),
