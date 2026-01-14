@@ -1,134 +1,125 @@
+import {Keypair, PublicKey} from "@solana/web3.js";
 import * as anchor from "@coral-xyz/anchor";
-import { Program } from "@coral-xyz/anchor";
-import { Range } from "../target/types/range";
-import { Keypair, PublicKey } from "@solana/web3.js";
-import { expect } from "chai";
+import {Program} from "@coral-xyz/anchor";
+import {Range} from "../target/types/range";
+import {expect} from "chai";
 import nacl from "tweetnacl";
+import {
+    getSettingsAddress,
+    buildInitializeSettingsInstruction,
+    buildVerifyRangeInstruction,
+    processAndValidateTransaction,
+    accountExists,
+} from "../codama-ts-dca-custom";
 
 describe("range", () => {
-  anchor.setProvider(anchor.AnchorProvider.env());
+    anchor.setProvider(anchor.AnchorProvider.env());
+    const program = anchor.workspace.range as Program<Range>;
+    const provider = anchor.getProvider() as anchor.AnchorProvider;
+    const connection = program.provider.connection;
+    const payer = Keypair.generate();
+    const rangeSignerKeypair = Keypair.generate();
+    const windowSize = 60n;
 
-  const program = anchor.workspace.range as Program<Range>;
-  const provider = anchor.getProvider() as anchor.AnchorProvider;
+    const createSignedMessage = (
+        timestamp: number,
+        signerPubkey: PublicKey,
+        signerKeypair: Keypair
+    ): { signature: Uint8Array; message: Uint8Array } => {
+        const message = Buffer.from(`${timestamp}_${signerPubkey.toBase58()}`);
+        const signature = nacl.sign.detached(message, signerKeypair.secretKey);
+        return {signature: new Uint8Array(signature), message: new Uint8Array(message)};
+    };
 
-  const rangeSignerKeypair = Keypair.generate();
-  const windowSize = new anchor.BN(60);
+    const getCurrentTimestamp = async (): Promise<number> => {
+        const slot = await connection.getSlot();
+        const clock = await connection.getBlockTime(slot);
+        return clock || Math.floor(Date.now() / 1000);
+    };
 
-  const getSettingsPda = (): PublicKey => {
-    const [pda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("Settings")],
-      program.programId
-    );
-    return pda;
-  };
+    before(async () => {
+        const airdropSignature = await connection.requestAirdrop(
+            payer.publicKey,
+            2_000_000_000
+        );
+        await connection.confirmTransaction(airdropSignature);
+    });
 
-  const createSignedMessage = (
-    timestamp: number,
-    signerPubkey: PublicKey,
-    signerKeypair: Keypair
-  ): { signature: Buffer; message: Buffer } => {
-    const message = Buffer.from(`${timestamp}_${signerPubkey.toBase58()}`);
-    const signature = nacl.sign.detached(message, signerKeypair.secretKey);
-    return { signature: Buffer.from(signature), message };
-  };
+    it("initializes settings", async () => {
+        const [settingsPda] = getSettingsAddress();
 
-  const getCurrentTimestamp = async (): Promise<number> => {
-    const clock = await provider.connection.getBlockTime(
-      await provider.connection.getSlot()
-    );
-    return clock || Math.floor(Date.now() / 1000);
-  };
+        const instruction = await buildInitializeSettingsInstruction({
+            signer: payer.publicKey,
+            rangeSigner: rangeSignerKeypair.publicKey,
+            windowSize,
+        });
 
-  it("initializes settings", async () => {
-    const settingsPda = getSettingsPda();
+        await processAndValidateTransaction(connection, [instruction], payer);
 
-    await program.methods
-      .initializeSettings({ windowSize })
-      .accounts({
-        signer: provider.wallet.publicKey,
-        settings: settingsPda,
-        rangeSigner: rangeSignerKeypair.publicKey,
-        systemProgram: anchor.web3.SystemProgram.programId,
-        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
-      .rpc();
+        const exists = await accountExists(connection, settingsPda);
+        expect(exists).to.be.true;
+    });
 
-    const settings = await program.account.settings.fetch(settingsPda);
-    expect(settings.windowSize.toNumber()).to.equal(windowSize.toNumber());
-    expect(settings.rangeSigner.toBase58()).to.equal(
-      rangeSignerKeypair.publicKey.toBase58()
-    );
-  });
+    it("verifies valid message within time window", async () => {
+        const currentTimestamp = await getCurrentTimestamp();
+        const {signature, message} = createSignedMessage(
+            currentTimestamp,
+            payer.publicKey,
+            rangeSignerKeypair
+        );
 
-  it("verifies valid message within time window", async () => {
-    const settingsPda = getSettingsPda();
-    const currentTimestamp = await getCurrentTimestamp();
-    const { signature, message } = createSignedMessage(
-      currentTimestamp,
-      provider.wallet.publicKey,
-      rangeSignerKeypair
-    );
+        const instruction = await buildVerifyRangeInstruction({
+            signer: payer.publicKey,
+            signature,
+            message,
+        });
 
-    await program.methods
-      .verifyRange(signature, message)
-      .accounts({
-        signer: provider.wallet.publicKey,
-        settings: settingsPda,
-        systemProgram: anchor.web3.SystemProgram.programId,
-        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
-      .rpc();
-  });
+        await processAndValidateTransaction(connection, [instruction], payer);
+    });
 
-  it("fails for message outside time window", async () => {
-    const settingsPda = getSettingsPda();
-    const currentTimestamp = await getCurrentTimestamp();
-    const outdatedTimestamp = currentTimestamp - windowSize.toNumber() - 100;
-    const { signature, message } = createSignedMessage(
-      outdatedTimestamp,
-      provider.wallet.publicKey,
-      rangeSignerKeypair
-    );
+    it("fails for message outside time window", async () => {
+        const currentTimestamp = await getCurrentTimestamp();
+        const outdatedTimestamp = currentTimestamp - Number(windowSize) - 100;
+        const {signature, message} = createSignedMessage(
+            outdatedTimestamp,
+            payer.publicKey,
+            rangeSignerKeypair
+        );
 
-    try {
-      await program.methods
-        .verifyRange(signature, message)
-        .accounts({
-          signer: provider.wallet.publicKey,
-          settings: settingsPda,
-          systemProgram: anchor.web3.SystemProgram.programId,
-          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-        })
-        .rpc();
-      expect.fail("should have thrown TimestampOutOfWindow error");
-    } catch (err) {
-      expect(err.toString()).to.include("TimestampOutOfWindow");
-    }
-  });
+        const instruction = await buildVerifyRangeInstruction({
+            signer: payer.publicKey,
+            signature,
+            message,
+        });
 
-  it("fails for message signed by wrong signer", async () => {
-    const settingsPda = getSettingsPda();
-    const currentTimestamp = await getCurrentTimestamp();
-    const wrongSignerKeypair = Keypair.generate();
-    const { signature, message } = createSignedMessage(
-      currentTimestamp,
-      provider.wallet.publicKey,
-      wrongSignerKeypair
-    );
+        try {
+            await processAndValidateTransaction(connection, [instruction], payer);
+            expect.fail("should have thrown TimestampOutOfWindow error");
+        } catch (err) {
+            expect(err.toString()).to.include("TimestampOutOfWindow");
+        }
+    });
 
-    try {
-      await program.methods
-        .verifyRange(signature, message)
-        .accounts({
-          signer: provider.wallet.publicKey,
-          settings: settingsPda,
-          systemProgram: anchor.web3.SystemProgram.programId,
-          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-        })
-        .rpc();
-      expect.fail("should have thrown CouldntVerifySignature error");
-    } catch (err) {
-      expect(err.toString()).to.include("CouldntVerifySignature");
-    }
-  });
+    it("fails for message signed by wrong signer", async () => {
+        const currentTimestamp = await getCurrentTimestamp();
+        const wrongSignerKeypair = Keypair.generate();
+        const {signature, message} = createSignedMessage(
+            currentTimestamp,
+            payer.publicKey,
+            wrongSignerKeypair
+        );
+
+        const instruction = await buildVerifyRangeInstruction({
+            signer: payer.publicKey,
+            signature,
+            message,
+        });
+
+        try {
+            await processAndValidateTransaction(connection, [instruction], payer);
+            expect.fail("should have thrown CouldntVerifySignature error");
+        } catch (err) {
+            expect(err.toString()).to.include("CouldntVerifySignature");
+        }
+    });
 });

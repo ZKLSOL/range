@@ -1,4 +1,5 @@
 {
+  "type": "module",
   "license": "ISC",
   "scripts": {
     "codama": "npx tsx scripts/gen-client.ts target/idl/range.json codama-rust-dca codama-ts-dca",

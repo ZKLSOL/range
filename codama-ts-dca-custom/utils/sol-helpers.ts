@@ -8,12 +8,7 @@ import {
   ComputeBudgetProgram,
   type AccountMeta,
 } from "@solana/web3.js";
-import {
-  address,
-  type Address,
-  type IInstruction,
-  type TransactionSigner,
-} from "@solana/kit";
+import { address, type Address, type TransactionSigner } from "@solana/kit";
 
 export type TxnResult = {
   signature: string;
@@ -23,6 +18,7 @@ export type TxnResult = {
 export function toTransactionSigner(publicKey: PublicKey): TransactionSigner {
   return {
     address: address(publicKey.toBase58()),
+    signTransactions: async (txs) => txs,
   } as TransactionSigner;
 }
 
@@ -38,17 +34,19 @@ export function toAccountMeta(
   };
 }
 
-export function toTransactionInstruction(
-  instruction: IInstruction
-): TransactionInstruction {
+export function toTransactionInstruction(instruction: {
+  programAddress: Address;
+  accounts: readonly { address: Address; role: number; signer?: unknown }[];
+  data: Uint8Array;
+}): TransactionInstruction {
   return new TransactionInstruction({
-    programId: new PublicKey(instruction.programAddress as string),
-    keys: (instruction.accounts ?? []).map((account) => ({
-      pubkey: new PublicKey(account.address as string),
-      isSigner: "signer" in account ? !!account.signer : false,
-      isWritable: "writable" in account ? !!account.writable : false,
+    programId: new PublicKey(instruction.programAddress),
+    keys: instruction.accounts.map((acc) => ({
+      pubkey: new PublicKey(acc.address),
+      isSigner: acc.role >= 2,
+      isWritable: acc.role === 1 || acc.role === 3,
     })),
-    data: Buffer.from(instruction.data ?? []),
+    data: Buffer.from(instruction.data),
   });
 }
 
