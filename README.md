@@ -341,7 +341,3 @@ range/
 | `WrongSigner`             | Message pubkey doesn't match transaction signer      |
 | `TimestampOutOfWindow`    | Timestamp outside allowed time window                |
 | `CouldntVerifySignature`  | Ed25519 signature verification failed                |
-
-## License
-
-ISC
